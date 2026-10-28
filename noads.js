@@ -4,27 +4,56 @@
     if (window.lampa_max_adblock_ready) return;
     window.lampa_max_adblock_ready = true;
 
-    // --- 1. Жесткий черный список ---
+    // --- 1. Черный список трекеров и рекламы ---
     var adDomains = [
-        'api2.rstprgapipt.com',  // Главный источник видеорекламы
-        'cub.best/api/ad',       // Встроенная реклама CUB
-        'yandex.ru/adfox',       // Рекламная сеть Яндекса
-        'weborama-tech.ru',      // Трекер показов
-        'an.yandex.ru',          // Баннеры
+        'cub.best/api/ad',
+        'cub.black/api/metric',  // Статистика (run, launch)
+        'yandex.ru/adfox',       // События показа
+        'weborama-tech.ru',      // Трекер
+        'an.yandex.ru',
         'googleadservices.com',
         'doubleclick.net',
         'ad.cub.red',
         'ads.cub.red'
     ];
 
+    // Опасные паттерны для слова "ad" (чтобы не заблокировать download или shadow)
+    var adPatterns = [
+        '/ad/', '.ad.', '/ads/', '/adv/', '=ad', '&ad', '_ad', '-ad', 
+        'adserver', 'adservice', 'adfox', 'adsystem', 'advert'
+    ];
+
+    function isAdVideoUrl(url) {
+        if (!url || typeof url !== 'string') return false;
+        return url.indexOf('runtime.strm.yandex.ru') !== -1 && 
+               (url.indexOf('vplv') !== -1 || url.indexOf('/ad') !== -1);
+    }
+
     function isAdUrl(url) {
         if (!url || typeof url !== 'string') return false;
+        if (isAdVideoUrl(url)) return true;
+        
         var lowerUrl = url.toLowerCase();
+        
+        // 1. Проверка по жесткому черному списку
         for (var i = 0; i < adDomains.length; i++) {
             if (lowerUrl.indexOf(adDomains[i]) !== -1) {
                 return true;
             }
         }
+
+        // 2. Умный поиск рекламных маркеров (ad, ads и т.д.)
+        for (var j = 0; j < adPatterns.length; j++) {
+            if (lowerUrl.indexOf(adPatterns[j]) !== -1) {
+                return true;
+            }
+        }
+
+        // 3. Блокировка поддоменов вида ad.example.com или ads.example.com
+        if (/^(https?:\/\/)?(ad|ads|adv|advert|adserver)\.[a-z0-9-]+\.[a-z]+/i.test(lowerUrl)) {
+            return true;
+        }
+
         return false;
     }
 
@@ -74,31 +103,47 @@
         };
     }
 
-    // --- 4. Перехват navigator.sendBeacon (трекеры часто используют его) ---
+    // --- 4. Перехват sendBeacon ---
     if (navigator.sendBeacon) {
         var originalBeacon = navigator.sendBeacon;
         navigator.sendBeacon = function (url, data) {
-            if (isAdUrl(url)) return true; // Имитируем успешную отправку
+            if (isAdUrl(url)) return true; 
             return originalBeacon.apply(this, arguments);
         };
     }
 
-    // --- 5. Блокировка рекламных картинок-пикселей ---
+    // --- 5. Перехват создания видео и картинок ---
     var originalCreateElement = document.createElement;
     document.createElement = new Proxy(originalCreateElement, {
         apply: function (target, thisArg, args) {
             var el = target.apply(thisArg, args);
-            if (args[0] && args[0].toLowerCase() === 'img') {
-                var originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
-                Object.defineProperty(el, 'src', {
-                    set: function (value) {
-                        if (isAdUrl(value)) return; // Игнорируем установку src
-                        originalSrcDescriptor.set.call(this, value);
-                    },
-                    get: function () {
-                        return originalSrcDescriptor.get.call(this);
-                    }
-                });
+            var tagName = args[0] ? args[0].toLowerCase() : '';
+            
+            if (tagName === 'img' || tagName === 'video' || tagName === 'source') {
+                var prop = 'src';
+                var proto = tagName === 'img' ? HTMLImageElement.prototype : 
+                            (tagName === 'video' ? HTMLVideoElement.prototype : HTMLSourceElement.prototype);
+                var originalDescriptor = Object.getOwnPropertyDescriptor(proto, prop);
+                
+                if (originalDescriptor) {
+                    Object.defineProperty(el, prop, {
+                        set: function (value) {
+                            if (isAdUrl(value)) {
+                                if (tagName === 'video') {
+                                    setTimeout(() => {
+                                        this.dispatchEvent(new Event('ended'));
+                                        this.dispatchEvent(new Event('error'));
+                                    }, 10);
+                                }
+                                return; 
+                            }
+                            originalDescriptor.set.call(this, value);
+                        },
+                        get: function () {
+                            return originalDescriptor.get.call(this);
+                        }
+                    });
+                }
             }
             return el;
         }
@@ -106,7 +151,7 @@
 
     // --- 6. Нейтрализация менеджеров рекламы ---
     function killAdManagers() {
-        var managers = ['AdManager', 'AdfoxManager', 'CubAdManager', 'PrerollManager'];
+        var managers = ['AdManager', 'AdfoxManager', 'CubAdManager', 'PrerollManager', 'AdsManager'];
         managers.forEach(function (name) {
             if (window[name]) {
                 window[name] = {
@@ -122,7 +167,7 @@
         });
     }
 
-    // --- 7. Удаление визуальных баннеров ---
+    // --- 7. Удаление баннеров ---
     function removeBanners() {
         var selectors = [
             '.cub-premium-banner', '.cub-ad', '.cub-subscribe',
@@ -149,8 +194,7 @@
 
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready') {
-                killAdManagers(); // Повторная нейтрализация
-
+                killAdManagers();
                 Lampa.Listener.follow('activity', function (event) {
                     if (event.type === 'start' || event.type === 'complete') {
                         setTimeout(removeBanners, 500);
