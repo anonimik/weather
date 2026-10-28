@@ -59,6 +59,7 @@
         var particles = [];
         var animationId = null;
         var currentMode = 'none';
+        var desiredMode = 'none';
 
         function resizeCanvas() {
             canvas.width = window.innerWidth;
@@ -66,6 +67,17 @@
         }
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
+
+        // --- Проверка: активен ли плеер ---
+        function isPlayerScreen() {
+            try {
+                var active = Lampa.Activity.active();
+                if (!active) return false;
+                return active.component === 'player' || active.component === 'tv';
+            } catch (e) {
+                return false;
+            }
+        }
 
         // --- 3. Частицы ---
         function Particle(mode) {
@@ -81,7 +93,6 @@
             this.speedX = (Math.random() - 0.5) * 1.5;
 
             if (this.mode === 'halloween') {
-                // ~18% — тыквы, остальное — листья
                 this.type = Math.random() < 0.18 ? 'pumpkin' : 'leaf';
                 if (this.type === 'pumpkin') {
                     this.size = 18 + Math.random() * 14;
@@ -110,16 +121,13 @@
             }
         };
 
-        // Рисует прожилки листа (центральная + боковые)
         function drawLeafVeins(ctx, size) {
             ctx.strokeStyle = 'rgba(60, 30, 0, 0.45)';
             ctx.lineWidth = 1;
-            // центральная
             ctx.beginPath();
             ctx.moveTo(0, -size * 0.55);
             ctx.lineTo(0, size * 0.55);
             ctx.stroke();
-            // боковые
             var pairs = [
                 [-0.35, -0.25], [-0.45, 0.05], [-0.35, 0.35]
             ];
@@ -135,7 +143,6 @@
             }
         }
 
-        // Рисует контур листа с зубцами (упрощённый кленовый)
         function drawLeafShape(ctx, size) {
             ctx.beginPath();
             ctx.moveTo(0, -size * 0.6);
@@ -174,17 +181,14 @@
                 ctx.globalAlpha = 0.95;
                 var r = this.size * 0.5;
 
-                // черешок
                 ctx.fillStyle = '#3B2412';
                 ctx.fillRect(-r * 0.12, -r * 1.15, r * 0.24, r * 0.35);
 
-                // тело тыквы
                 ctx.fillStyle = '#F57C00';
                 ctx.beginPath();
                 ctx.ellipse(0, 0, r, r * 0.85, 0, 0, Math.PI * 2);
                 ctx.fill();
 
-                // дольки
                 ctx.strokeStyle = 'rgba(180, 80, 0, 0.55)';
                 ctx.lineWidth = Math.max(1, r * 0.08);
                 var slices = [-0.55, 0, 0.55];
@@ -194,7 +198,6 @@
                     ctx.stroke();
                 }
 
-                // глаза (треугольные)
                 ctx.fillStyle = '#2B1A0A';
                 var eyeY = -r * 0.15;
                 var eyeDx = r * 0.32;
@@ -212,7 +215,6 @@
                 ctx.closePath();
                 ctx.fill();
 
-                // улыбка-зубы
                 ctx.beginPath();
                 var mouthY = r * 0.35;
                 var mouthW = r * 0.55;
@@ -303,8 +305,21 @@
             if (snow) target = 'snow';
             else if (halloween) target = 'halloween';
 
+            desiredMode = target;
+
+            if (isPlayerScreen()) {
+                if (currentMode !== 'none') startAnimation('none');
+                return;
+            }
+
             if (target !== currentMode) startAnimation(target);
         }
+
+        Lampa.Listener.follow('activity', function (e) {
+            if (e.type === 'start' || e.type === 'complete') {
+                setTimeout(updateEffects, 100);
+            }
+        });
 
         setTimeout(updateEffects, 1000);
     }
