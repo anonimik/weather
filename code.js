@@ -4,16 +4,19 @@
     if (window.fall_effects_plugin_ready) return;
     window.fall_effects_plugin_ready = true;
 
+    var initialized = false;
+
     function init() {
-        // --- 1. Регистрация раздела в настройках ---
+        if (initialized) return;
+        initialized = true;
+
+        // --- 1. Регистрация раздела ---
         Lampa.SettingsApi.addComponent({
             component: 'fall_effects',
             name: 'Праздничные эффекты',
-            // Упрощенная иконка (звезда), чтобы точно отобразилась
             icon: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6-4.8-6 4.8 2.4-7.2-6-4.8h7.6z"/></svg>'
         });
 
-        // Переключатель для Хэллоуина
         Lampa.SettingsApi.addParam({
             component: 'fall_effects',
             param: {
@@ -26,11 +29,11 @@
                 description: 'Включить падающие мультяшные листья'
             },
             onChange: function () {
-                updateEffects();
+                // даём Lampa записать значение в Storage
+                setTimeout(updateEffects, 50);
             }
         });
 
-        // Переключатель для Снега
         Lampa.SettingsApi.addParam({
             component: 'fall_effects',
             param: {
@@ -43,14 +46,14 @@
                 description: 'Включить падающий снег и снеговиков'
             },
             onChange: function () {
-                updateEffects();
+                setTimeout(updateEffects, 50);
             }
         });
 
-        // --- 2. Создание Canvas для анимации ---
+        // --- 2. Canvas ---
         var canvas = document.createElement('canvas');
         canvas.id = 'fall-effects-canvas';
-        canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;';
+        canvas.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;display:none;';
         document.body.appendChild(canvas);
 
         var ctx = canvas.getContext('2d');
@@ -65,7 +68,7 @@
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
 
-        // --- 3. Логика частиц ---
+        // --- 3. Частицы ---
         function Particle(mode) {
             this.mode = mode;
             this.reset(true);
@@ -79,7 +82,7 @@
             this.speedX = (Math.random() - 0.5) * 1.5;
             this.rotation = Math.random() * Math.PI * 2;
             this.rotSpeed = (Math.random() - 0.5) * 0.05;
-            
+
             if (this.mode === 'halloween') {
                 var colors = ['#FF8C00', '#FF4500', '#DAA520', '#8B4513', '#CD853F'];
                 this.color = colors[Math.floor(Math.random() * colors.length)];
@@ -154,9 +157,12 @@
             ctx.restore();
         };
 
-        // --- 4. Логика переключения (ИСПРАВЛЕНО ЗДЕСЬ) ---
+        // --- 4. Анимация ---
         function startAnimation(mode) {
-            if (animationId) cancelAnimationFrame(animationId);
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+            }
             particles = [];
             currentMode = mode;
 
@@ -173,7 +179,7 @@
             }
 
             function loop() {
-                if (currentMode === 'none') return;
+                if (currentMode !== mode) return; // защита от устаревшего цикла
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 for (var i = 0; i < particles.length; i++) {
                     particles[i].update();
@@ -185,27 +191,18 @@
         }
 
         function updateEffects() {
-            // ИСПОЛЬЗУЕМ ПРАВИЛЬНЫЙ МЕТОД Lampa.Storage.get
             var halloween = Lampa.Storage.get('fall_effects_halloween', false);
             var snow = Lampa.Storage.get('fall_effects_snow', false);
 
-            if (snow) {
-                if (currentMode !== 'snow') startAnimation('snow');
-            } else if (halloween) {
-                if (currentMode !== 'halloween') startAnimation('halloween');
-            } else {
-                if (currentMode !== 'none') startAnimation('none');
-            }
+            var target = 'none';
+            if (snow) target = 'snow';
+            else if (halloween) target = 'halloween';
+
+            if (target !== currentMode) startAnimation(target);
         }
 
+        // Применяем сохранённые настройки
         setTimeout(updateEffects, 1000);
-        Lampa.Listener.follow('settings', function (e) {
-            if (e.component === 'fall_effects') {
-                updateEffects();
-            }
-        });
-
-        console.log('Плагин праздничных эффектов загружен.');
     }
 
     if (window.appready) {
