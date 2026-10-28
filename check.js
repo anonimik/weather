@@ -6,16 +6,19 @@
 
     var initialized = false;
     var iconElement = null;
+    var isNonRuCached = null; // Кэш для хранения результата проверки
 
-    // SVG-иконка в стиле iOS (щит с замком / глобус)
-    var VPN_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" style="vertical-align: middle;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>';
+    // SVG-иконка в стиле iOS (щит)
+    var VPN_ICON_SVG = '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor" style="vertical-align: middle;"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z"/></svg>';
 
-    // Альтернативная иконка (глобус, если первая не нравится)
-    // var VPN_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>';
-
-    // Проверка страны через публичный API (без ключа, лимиты)
+    // Проверка страны через публичный API
     function checkCountry(callback) {
-        // Используем ipapi.co (бесплатно, до 1000 запросов в день)
+        // Если результат уже есть в кэше, отдаем его
+        if (isNonRuCached !== null) {
+            callback(isNonRuCached);
+            return;
+        }
+
         var xhr = new XMLHttpRequest();
         xhr.open('GET', 'https://ipapi.co/json/', true);
         xhr.timeout = 5000;
@@ -23,54 +26,69 @@
             if (xhr.status === 200) {
                 try {
                     var data = JSON.parse(xhr.responseText);
-                    // country_code — двухбуквенный код страны (RU, US, DE и т.д.)
-                    callback(data.country_code || null);
+                    var countryCode = data.country_code || '';
+                    isNonRuCached = countryCode.toUpperCase() !== 'RU';
+                    callback(isNonRuCached);
                 } catch (e) {
-                    callback(null);
+                    callback(false);
                 }
             } else {
-                callback(null);
+                callback(false);
             }
         };
-        xhr.onerror = function () { callback(null); };
-        xhr.ontimeout = function () { callback(null); };
+        xhr.onerror = function () { callback(false); };
+        xhr.ontimeout = function () { callback(false); };
         xhr.send();
     }
 
-    // Создание иконки в верхней панели
+    // Создание иконки
     function createIcon() {
-        if (iconElement) return;
+        if (iconElement && document.body.contains(iconElement)) return; // Уже создана
 
-        // Ищем контейнер для иконок в верхней панели Lampa
-        // Класс может отличаться в разных версиях, используем несколько селекторов
-        var header = document.querySelector('.head__actions') || 
-                     document.querySelector('.head__action') || 
-                     document.querySelector('.header__actions');
+        // Ищем кнопку поиска по SVG-пути (лупа)
+        var searchIcon = document.querySelector('svg path[d^="M15.5 14h-.79l-.28-.27"]') || 
+                         document.querySelector('svg path[d^="M15.5"]');
         
-        if (!header) {
-            // Если шапки нет (например, мы не на главном экране), пробуем позже
+        var anchor = null;
+
+        if (searchIcon) {
+            // Находим родительский кликабельный элемент кнопки
+            anchor = searchIcon.closest('.head__action') || searchIcon.parentElement.parentElement;
+        } else {
+            // Фолбэк: если лупу не нашли, ищем контейнер с иконками
+            var headerActions = document.querySelector('.head__actions');
+            if (headerActions) {
+                anchor = headerActions.firstElementChild; 
+            }
+        }
+
+        if (!anchor) {
             setTimeout(createIcon, 500);
             return;
         }
 
+        if (iconElement) iconElement.remove();
+
         iconElement = document.createElement('div');
-        iconElement.className = 'head__action selector vpn-icon-indicator';
+        iconElement.className = anchor.className; // Копируем стили кнопки (отступы, ховеры)
         iconElement.innerHTML = VPN_ICON_SVG;
-        iconElement.style.cssText = 'display:none; margin-left: 10px; color: #4CD964; align-items: center; justify-content: center;';
+        // Зеленый цвет для наглядности
+        iconElement.style.cssText = 'display:none; color: #4CD964; align-items: center; justify-content: center; cursor: default;';
         iconElement.title = 'VPN / Non-RU IP';
 
-        // Вставляем в начало панели (или в конец, по вкусу)
-        header.insertBefore(iconElement, header.firstChild);
+        // Вставляем СРАЗУ ПОСЛЕ кнопки поиска
+        anchor.parentNode.insertBefore(iconElement, anchor.nextSibling);
+        
+        // Если страна уже определена, сразу показываем/скрываем
+        if (isNonRuCached !== null) {
+            updateIconVisibility(isNonRuCached);
+        }
     }
 
     // Показать/скрыть иконку
     function updateIconVisibility(isNonRu) {
         if (!iconElement) return;
-        if (isNonRu) {
-            iconElement.style.display = 'flex';
-        } else {
-            iconElement.style.display = 'none';
-        }
+        iconElement.style.display = isNonRu ? 'flex' : 'none';
     }
 
     // Основная логика
@@ -78,35 +96,22 @@
         if (initialized) return;
         initialized = true;
 
-        // Ждём загрузки интерфейса
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready') {
-                // Даём Lampa время отрисовать шапку
                 setTimeout(function () {
                     createIcon();
-                    
-                    // Проверяем страну
-                    checkCountry(function (countryCode) {
-                        if (!countryCode) {
-                            // Не удалось определить — не показываем иконку
-                            updateIconVisibility(false);
-                            return;
-                        }
-                        // Если код страны НЕ 'RU' — показываем иконку
-                        var isNonRu = countryCode.toUpperCase() !== 'RU';
+                    checkCountry(function (isNonRu) {
                         updateIconVisibility(isNonRu);
                     });
                 }, 1500);
             }
         });
 
-        // Также обновляем при смене экрана (на случай, если шапка пересоздалась)
+        // Обновляем при переходах (если Lampa перерисовала шапку)
         Lampa.Listener.follow('activity', function (e) {
             if (e.type === 'complete' || e.type === 'start') {
                 setTimeout(function () {
-                    if (!iconElement || !document.body.contains(iconElement)) {
-                        createIcon();
-                    }
+                    createIcon();
                 }, 500);
             }
         });
