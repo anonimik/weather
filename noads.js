@@ -1,49 +1,43 @@
 (function () {
     'use strict';
 
-    if (window.lampa_security_plugin_ready) return;
-    window.lampa_security_plugin_ready = true;
+    if (window.cub_hard_adblock_ready) return;
+    window.cub_hard_adblock_ready = true;
 
-    // --- 1. Блокировка сетевых запросов к рекламным/трекинговым доменам ---
-    var blockDomains = [
+    // --- 1. Настройка списка блокировки ---
+    var adDomains = [
+        'cub.best/api/ad',
         'ad.cub.red',
         'ads.cub.red',
         'cub.red/ad',
-        'cub.red/ads',
-        'yandex.ru/ads',
-        'an.yandex.ru',
-        'googleadservices.com',
-        'doubleclick.net',
-        'adservice.google.com',
-        'googlesyndication.com',
-        'google-analytics.com',
-        'mc.yandex.ru',
-        'top-fwz1.mail.ru',
-        'vk.com/rtrg'
+        'cub.red/ads'
     ];
 
-    function isBlockedUrl(url) {
+    function isAdUrl(url) {
         if (!url || typeof url !== 'string') return false;
         var lowerUrl = url.toLowerCase();
-        for (var i = 0; i < blockDomains.length; i++) {
-            if (lowerUrl.indexOf(blockDomains[i]) !== -1) return true;
+        for (var i = 0; i < adDomains.length; i++) {
+            if (lowerUrl.indexOf(adDomains[i]) !== -1) {
+                return true;
+            }
         }
         return false;
     }
 
-    // Перехват fetch
+    // --- 2. Перехват fetch ---
     var originalFetch = window.fetch;
     if (originalFetch) {
         window.fetch = function (input, init) {
             var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-            if (isBlockedUrl(url)) {
+            if (isAdUrl(url)) {
+                // Возвращаем пустой успешный ответ, чтобы Lampa не падала с ошибкой
                 return Promise.resolve(new Response('', { status: 200, statusText: 'OK' }));
             }
             return originalFetch.apply(this, arguments);
         };
     }
 
-    // Перехват XMLHttpRequest
+    // --- 3. Перехват XMLHttpRequest ---
     var originalXHR = window.XMLHttpRequest;
     if (originalXHR) {
         window.XMLHttpRequest = function () {
@@ -52,7 +46,7 @@
             var originalSend = xhr.send;
 
             xhr.open = function (method, url) {
-                if (isBlockedUrl(url)) {
+                if (isAdUrl(url)) {
                     this._blocked = true;
                     return;
                 }
@@ -61,6 +55,7 @@
 
             xhr.send = function () {
                 if (this._blocked) {
+                    // Эмулируем успешную загрузку пустого ответа
                     setTimeout(function () {
                         if (xhr.onload) xhr.onload();
                         else if (xhr.onreadystatechange) {
@@ -77,59 +72,68 @@
         };
     }
 
-    // --- 2. Удаление сторонних iframe (потенциально опасные виджеты) ---
-    function removeUnsafeIframes() {
-        try {
-            var iframes = document.querySelectorAll('iframe');
-            iframes.forEach(function (iframe) {
-                var src = (iframe.src || '').toLowerCase();
-                // Оставляем только iframe с того же домена, что и Lampa
-                if (src && src.indexOf(window.location.hostname) === -1 && src.indexOf('lampa') === -1) {
-                    iframe.remove();
-                }
-            });
-        } catch (e) {}
+    // --- 4. Нейтрализация менеджера рекламы (если он глобальный) ---
+    // Некоторые сборки Lampa выносят логику рекламы в глобальные объекты
+    function killAdManager() {
+        if (window.AdManager) {
+            window.AdManager = {
+                init: function() {},
+                load: function() {},
+                show: function() {},
+                showPreroll: function() {},
+                showBanner: function() {},
+                render: function() {}
+            };
+        }
+        // Если менеджер спрятан в Lampa
+        if (window.Lampa && window.Lampa.AdManager) {
+            window.Lampa.AdManager = {
+                init: function() {},
+                load: function() {},
+                show: function() {}
+            };
+        }
     }
 
-    // --- 3. Удаление баннеров и рекламных блоков ---
-    function removeBanners() {
+    // --- 5. Удаление баннеров из интерфейса ---
+    function removeCubAds() {
         var selectors = [
             '.cub-premium-banner',
             '.cub-ad',
             '.cub-subscribe',
             '[class*="cub"][class*="premium"]',
             '[class*="cub"][class*="ad"]',
-            '[id*="ad-"]',
-            '[class*="ad-banner"]'
+            '[id*="banner"]',
+            '[class*="banner"]'
         ];
-        selectors.forEach(function (sel) {
+        
+        selectors.forEach(function(sel) {
             try {
-                document.querySelectorAll(sel).forEach(function (el) {
-                    el.remove();
+                var elements = document.querySelectorAll(sel);
+                elements.forEach(function(el) {
+                    // Осторожно: не удаляем элементы самого плеера
+                    if (el.tagName !== 'VIDEO') {
+                        el.style.display = 'none';
+                        el.remove();
+                    }
                 });
             } catch (e) {}
         });
     }
 
-    // --- Запуск ---
     function init() {
+        killAdManager();
+
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready') {
-                // Очистка при старте
-                setTimeout(function () {
-                    removeBanners();
-                    removeUnsafeIframes();
-                }, 1000);
+                killAdManager(); // Повторяем на всякий случай
 
-                // Очистка при смене экранов
                 Lampa.Listener.follow('activity', function (event) {
                     if (event.type === 'start' || event.type === 'complete') {
-                        setTimeout(function () {
-                            removeBanners();
-                            removeUnsafeIframes();
-                        }, 500);
+                        setTimeout(removeCubAds, 500);
                     }
                 });
+                setTimeout(removeCubAds, 1500);
             }
         });
     }
