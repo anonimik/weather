@@ -1,16 +1,20 @@
 (function () {
     'use strict';
 
-    if (window.cub_hard_adblock_ready) return;
-    window.cub_hard_adblock_ready = true;
+    if (window.lampa_max_adblock_ready) return;
+    window.lampa_max_adblock_ready = true;
 
-    // --- 1. Настройка списка блокировки ---
+    // --- 1. Жесткий черный список ---
     var adDomains = [
-        'cub.best/api/ad',
+        'api2.rstprgapipt.com',  // Главный источник видеорекламы
+        'cub.best/api/ad',       // Встроенная реклама CUB
+        'yandex.ru/adfox',       // Рекламная сеть Яндекса
+        'weborama-tech.ru',      // Трекер показов
+        'an.yandex.ru',          // Баннеры
+        'googleadservices.com',
+        'doubleclick.net',
         'ad.cub.red',
-        'ads.cub.red',
-        'cub.red/ad',
-        'cub.red/ads'
+        'ads.cub.red'
     ];
 
     function isAdUrl(url) {
@@ -30,7 +34,6 @@
         window.fetch = function (input, init) {
             var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
             if (isAdUrl(url)) {
-                // Возвращаем пустой успешный ответ, чтобы Lampa не падала с ошибкой
                 return Promise.resolve(new Response('', { status: 200, statusText: 'OK' }));
             }
             return originalFetch.apply(this, arguments);
@@ -55,7 +58,6 @@
 
             xhr.send = function () {
                 if (this._blocked) {
-                    // Эмулируем успешную загрузку пустого ответа
                     setTimeout(function () {
                         if (xhr.onload) xhr.onload();
                         else if (xhr.onreadystatechange) {
@@ -72,46 +74,67 @@
         };
     }
 
-    // --- 4. Нейтрализация менеджера рекламы (если он глобальный) ---
-    // Некоторые сборки Lampa выносят логику рекламы в глобальные объекты
-    function killAdManager() {
-        if (window.AdManager) {
-            window.AdManager = {
-                init: function() {},
-                load: function() {},
-                show: function() {},
-                showPreroll: function() {},
-                showBanner: function() {},
-                render: function() {}
-            };
-        }
-        // Если менеджер спрятан в Lampa
-        if (window.Lampa && window.Lampa.AdManager) {
-            window.Lampa.AdManager = {
-                init: function() {},
-                load: function() {},
-                show: function() {}
-            };
-        }
+    // --- 4. Перехват navigator.sendBeacon (трекеры часто используют его) ---
+    if (navigator.sendBeacon) {
+        var originalBeacon = navigator.sendBeacon;
+        navigator.sendBeacon = function (url, data) {
+            if (isAdUrl(url)) return true; // Имитируем успешную отправку
+            return originalBeacon.apply(this, arguments);
+        };
     }
 
-    // --- 5. Удаление баннеров из интерфейса ---
-    function removeCubAds() {
+    // --- 5. Блокировка рекламных картинок-пикселей ---
+    var originalCreateElement = document.createElement;
+    document.createElement = new Proxy(originalCreateElement, {
+        apply: function (target, thisArg, args) {
+            var el = target.apply(thisArg, args);
+            if (args[0] && args[0].toLowerCase() === 'img') {
+                var originalSrcDescriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+                Object.defineProperty(el, 'src', {
+                    set: function (value) {
+                        if (isAdUrl(value)) return; // Игнорируем установку src
+                        originalSrcDescriptor.set.call(this, value);
+                    },
+                    get: function () {
+                        return originalSrcDescriptor.get.call(this);
+                    }
+                });
+            }
+            return el;
+        }
+    });
+
+    // --- 6. Нейтрализация менеджеров рекламы ---
+    function killAdManagers() {
+        var managers = ['AdManager', 'AdfoxManager', 'CubAdManager', 'PrerollManager'];
+        managers.forEach(function (name) {
+            if (window[name]) {
+                window[name] = {
+                    init: function () {}, load: function () {}, show: function () {},
+                    showPreroll: function () {}, showBanner: function () {}
+                };
+            }
+            if (window.Lampa && window.Lampa[name]) {
+                window.Lampa[name] = {
+                    init: function () {}, load: function () {}, show: function () {}
+                };
+            }
+        });
+    }
+
+    // --- 7. Удаление визуальных баннеров ---
+    function removeBanners() {
         var selectors = [
-            '.cub-premium-banner',
-            '.cub-ad',
-            '.cub-subscribe',
-            '[class*="cub"][class*="premium"]',
-            '[class*="cub"][class*="ad"]',
-            '[id*="banner"]',
-            '[class*="banner"]'
+            '.cub-premium-banner', '.cub-ad', '.cub-subscribe',
+            '[class*="cub"][class*="premium"]', '[class*="cub"][class*="ad"]',
+            '[id*="banner"]', '[class*="banner"]',
+            'iframe[src*="yandex"]', 'iframe[src*="adfox"]'
         ];
         
         selectors.forEach(function(sel) {
             try {
                 var elements = document.querySelectorAll(sel);
                 elements.forEach(function(el) {
-                    // Осторожно: не удаляем элементы самого плеера
                     if (el.tagName !== 'VIDEO') {
                         el.style.display = 'none';
                         el.remove();
@@ -122,18 +145,18 @@
     }
 
     function init() {
-        killAdManager();
+        killAdManagers();
 
         Lampa.Listener.follow('app', function (e) {
             if (e.type === 'ready') {
-                killAdManager(); // Повторяем на всякий случай
+                killAdManagers(); // Повторная нейтрализация
 
                 Lampa.Listener.follow('activity', function (event) {
                     if (event.type === 'start' || event.type === 'complete') {
-                        setTimeout(removeCubAds, 500);
+                        setTimeout(removeBanners, 500);
                     }
                 });
-                setTimeout(removeCubAds, 1500);
+                setTimeout(removeBanners, 1500);
             }
         });
     }
