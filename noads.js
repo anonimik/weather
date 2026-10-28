@@ -7,9 +7,10 @@
     // --- 1. Черный список трекеров и рекламы ---
     var adDomains = [
         'cub.best/api/ad',
-        'cub.black/api/metric',  // Статистика (run, launch)
-        'yandex.ru/adfox',       // События показа
-        'weborama-tech.ru',      // Трекер
+        'cub.black/api/metric',
+        'cubnotrip.top/api/metric', // Добавлено: блокировка метрики cubnotrip.top
+        'yandex.ru/adfox',
+        'weborama-tech.ru',
         'an.yandex.ru',
         'googleadservices.com',
         'doubleclick.net',
@@ -17,7 +18,7 @@
         'ads.cub.red'
     ];
 
-    // Опасные паттерны для слова "ad" (чтобы не заблокировать download или shadow)
+    // Опасные паттерны для слова "ad"
     var adPatterns = [
         '/ad/', '.ad.', '/ads/', '/adv/', '=ad', '&ad', '_ad', '-ad', 
         'adserver', 'adservice', 'adfox', 'adsystem', 'advert'
@@ -35,21 +36,21 @@
         
         var lowerUrl = url.toLowerCase();
         
-        // 1. Проверка по жесткому черному списку
+        // 1. Проверка по жесткому черному списку (включая метрику)
         for (var i = 0; i < adDomains.length; i++) {
             if (lowerUrl.indexOf(adDomains[i]) !== -1) {
                 return true;
             }
         }
 
-        // 2. Умный поиск рекламных маркеров (ad, ads и т.д.)
+        // 2. Умный поиск рекламных маркеров
         for (var j = 0; j < adPatterns.length; j++) {
             if (lowerUrl.indexOf(adPatterns[j]) !== -1) {
                 return true;
             }
         }
 
-        // 3. Блокировка поддоменов вида ad.example.com или ads.example.com
+        // 3. Блокировка поддоменов вида ad.example.com
         if (/^(https?:\/\/)?(ad|ads|adv|advert|adserver)\.[a-z0-9-]+\.[a-z]+/i.test(lowerUrl)) {
             return true;
         }
